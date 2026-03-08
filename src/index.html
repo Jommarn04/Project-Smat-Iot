@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { font-family: 'Outfit', sans-serif; background: linear-gradient(135deg, #0f172a, #1e293b); position: relative; overflow-x: hidden; transition: background 0.5s ease, color 0.5s ease; }
+        .gauge-path { transition: stroke-dasharray 0.5s ease-out; }
+        .glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); transition: 0.4s ease; box-shadow: 0 0 20px rgba(0, 0, 0, 0.3); }
+        .glass:hover { transform: translateY(-4px); background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.15); }
+        body.light-mode { background: linear-gradient(135deg, #f1f5f9, #e2e8f0); color: #0f172a; }
+        body.light-mode .glass { background: rgba(255, 255, 255, 0.7); border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05); }
+        body.light-mode .glass:hover { background: rgba(255, 255, 255, 0.9); }
+        body.light-mode .text-white { color: #0f172a !important; }
+        body.light-mode .text-gray-400 { color: #64748b !important; }
+        body.light-mode .text-gray-300 { color: #475569 !important; }
+        body.light-mode .bg-gray-800\/50 { background-color: rgba(255, 255, 255, 0.8) !important; border-color: #cbd5e1 !important; color: #333 !important; }
+        body.light-mode #counter { color: #0f172a !important; }
+
+        .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; transition: all 0.3s ease; }
+        .live-dot.green { background-color: #10b981; box-shadow: 0 0 8px #10b981; animation: pulseDot 1.5s infinite; }
+        .live-dot.red { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .live-dot.energy { background-color: #facc15; box-shadow: 0 0 8px #facc15; animation: pulseDot 1.5s infinite; }
+        .live-dot.moisture { background-color: #38bdf8; box-shadow: 0 0 8px #38bdf8; animation: pulseDot 1.5s infinite; }
+
+        @keyframes pulseDot { 0% { transform: scale(0.95); opacity: 1; } 70% { transform: scale(1.2); opacity: 0.4; } 100% { transform: scale(0.95); opacity: 1; } }
+        .text-gradient-energy { background: linear-gradient(to right, #fbbf24, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .text-gradient-moisture { background: linear-gradient(to right, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+        @keyframes pulseGlow { 0%, 100% { text-shadow: 0 0 10px rgba(56, 189, 248, 0.5); } 50% { text-shadow: 0 0 25px rgba(56, 189, 248, 0.9), 0 0 40px rgba(34, 211, 238, 0.5); } }
+        .toggle-switch { transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55); }
+        .toggle-switch.on { background: linear-gradient(90deg, #10b981, #34d399) !important; box-shadow: 0 0 20px rgba(16, 185, 129, 0.6); }
+    </style>
+</head>
+
+<body class="min-h-screen text-white p-6 pb-20">
+    <div class="max-w-6xl mx-auto space-y-8">
+        <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-4 border-b border-gray-700/50 pb-6 transition-colors">
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight">
+                Soil Moisture <span class="text-blue-400">Dashboard</span>
+            </h1>
+
+            <div class="flex items-center gap-4">
+                <button onclick="toggleTheme()" class="p-3 rounded-full glass hover:scale-105 transition-transform flex items-center justify-center">
+                    <svg id="themeIcon" class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                    </svg>
+                </button>
+
+                <div id="connectionStatusBox" class="flex items-center text-sm font-medium bg-gray-800/50 px-4 py-2 rounded-full border border-gray-700 transition-colors">
+                    <span id="connectionDot" class="live-dot red"></span> <span id="connectionText">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
+            <div class="glass p-6 rounded-3xl flex flex-col items-center justify-center relative aspect-square md:aspect-auto">
+                <h3 class="absolute top-6 left-6 text-gray-400 text-sm font-medium">Water Ratio</h3>
+                <div class="relative w-48 h-48 mt-4">
+                    <svg viewBox="0 0 100 95" class="w-full h-full absolute inset-0 overflow-visible drop-shadow-lg">
+                        <g>
+                            <path d="M 23.1 76.9 A 38 38 0 1 1 76.9 76.9" fill="none" stroke="#cbd5e1" stroke-width="11" stroke-linecap="round" class="opacity-30" />
+                            <path id="gaugeThin" d="M 28 72 A 31 31 0 1 1 72 72" fill="none" stroke="#60A5FA" stroke-width="0.75" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" class="gauge-path" />
+                            <path id="gaugeDarkBlue" d="M 23.1 76.9 A 38 38 0 1 1 76.9 76.9" fill="none" stroke="#3B82F6" stroke-width="11" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" class="gauge-path" />
+                            <path id="gaugeLightBlue" d="M 23.1 76.9 A 38 38 0 1 1 76.9 76.9" fill="none" stroke="#38BDF8" stroke-width="11" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" class="gauge-path" />
+                            <path id="gaugeGreen" d="M 23.1 76.9 A 38 38 0 1 1 76.9 76.9" fill="none" stroke="#4ADE80" stroke-width="11" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" class="gauge-path" />
+                        </g>
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center mt-2">
+                        <div class="flex items-center space-x-1">
+                            <span id="counter" class="text-4xl font-extrabold text-[#fff] tracking-tighter">0%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-6 xl:col-span-2">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+                    <div class="glass p-6 rounded-3xl flex flex-col justify-center">
+                        <div class="flex items-center text-sm font-medium text-gray-300 opacity-90">
+                            <span class="live-dot energy"></span> Total Consumption
+                        </div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold mt-4 tracking-tight">
+                            <span id="totalEnergy" class="text-gradient-energy pulse-glow">0.0</span>
+                            <span class="text-xl text-gray-400 font-semibold ml-1">kWh</span>
+                        </h2>
+                    </div>
+
+                    <div class="glass p-6 rounded-3xl flex flex-col justify-center">
+                        <div class="flex items-center text-sm font-medium text-gray-300 opacity-90">
+                            <span class="live-dot moisture"></span> Current Moisture
+                        </div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold mt-4 tracking-tight">
+                            <span id="moistureVal" class="text-gradient-moisture pulse-glow">0</span>
+                            <span class="text-xl text-gray-400 font-semibold ml-1">%</span>
+                        </h2>
+                    </div>
+                </div>
+
+                <div class="glass p-5 rounded-2xl flex justify-between items-center">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-blue-500/20 p-3 rounded-full text-blue-400">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-gray-300 text-sm font-medium">Main Water Pump</p>
+                            <p id="pumpStatus" class="font-bold text-gray-400 text-xs mt-1">Status: OFF</p>
+                        </div>
+                    </div>
+                    <div id="pumpToggleBtn" onclick="sendPumpToggle()" class="toggle-switch w-14 h-8 bg-gray-600 rounded-full p-1 flex items-center cursor-pointer transition opacity-50 pointer-events-none">
+                        <div id="pumpDot" class="w-6 h-6 bg-white rounded-full transition shadow-lg"></div>
+                    </div>
+                </div>
+
+                <div class="glass p-4 rounded-3xl mt-2">
+                    <h3 class="text-sm text-gray-300 mb-4">Moisture Threshold</h3>
+                    <input type="range" min="0" max="100" value="30" id="thresholdSlider" class="w-full" oninput="updateThreshold(this.value)">
+                    <div class="text-center mt-3">
+                        <span id="thresholdValue" class="text-xl font-bold text-blue-400">30</span> %
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-4">
+            <div class="glass p-6 rounded-3xl">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="font-bold text-lg text-white">Live Data Stream</h3>
+                        <p class="text-xs text-gray-400">Real-time daily monitoring</p>
+                    </div>
+                    <span class="bg-blue-500/20 text-blue-400 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-2">
+                        <span class="live-dot moisture !m-0 !w-2 !h-2"></span> LIVE
+                    </span>
+                </div>
+                <div class="h-64 w-full relative">
+                    <canvas id="realtimeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass p-6 rounded-3xl">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="font-bold text-lg text-white">Weekly Overview</h3>
+                        <p class="text-xs text-gray-400">Consumption & Moisture</p>
+                    </div>
+                </div>
+                <div class="h-64 w-full relative">
+                    <canvas id="weeklyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const body = document.body;
+            body.classList.toggle('light-mode');
+            const isLight = body.classList.contains('light-mode');
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+
+            const icon = document.getElementById('themeIcon');
+            if (isLight) {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+                icon.classList.remove('text-yellow-400');
+                icon.classList.add('text-slate-600');
+            } else {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>';
+                icon.classList.remove('text-slate-600');
+                icon.classList.add('text-yellow-400');
+            }
+        }
+
+        if (localStorage.getItem('theme') === 'light') {
+            document.body.classList.add('light-mode');
+            const icon = document.getElementById('themeIcon');
+            icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+            icon.classList.replace('text-yellow-400', 'text-slate-600');
+        }
+    </script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDuWC2WdU2NmyXEWG66LCVBpGSYOICNQeQ",
+            authDomain: "smartfarm-iot-d1ad0.firebaseapp.com",
+            databaseURL: "https://smartfarm-iot-d1ad0-default-rtdb.asia-southeast1.firebasedatabase.app/",
+            projectId: "smartfarm-iot-d1ad0"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // --- ตั้งค่ากราฟ Chart.js ---
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Outfit', sans-serif";
+        Chart.defaults.scale.grid.color = 'rgba(148, 163, 184, 0.1)';
+
+        const ctxRealtime = document.getElementById('realtimeChart').getContext('2d');
+        let gradientRealtime = ctxRealtime.createLinearGradient(0, 0, 0, 400);
+        gradientRealtime.addColorStop(0, 'rgba(56, 189, 248, 0.5)');
+        gradientRealtime.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+
+        const realtimeChart = new Chart(ctxRealtime, {
+            type: 'line',
+            data: {
+                labels: Array(20).fill(''),
+                datasets: [{
+                    label: 'Moisture Level %',
+                    data: Array(20).fill(null),
+                    borderColor: '#38bdf8',
+                    backgroundColor: gradientRealtime,
+                    borderWidth: 2,
+                    pointBackgroundColor: '#0f172a',
+                    pointBorderColor: '#38bdf8',
+                    pointBorderWidth: 2,
+                    pointRadius: 3,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { display: false } }, y: { min: 0, max: 100, ticks: { stepSize: 25 } } }, animation: { duration: 0 } }
+        });
+
+        const ctxWeekly = document.getElementById('weeklyChart').getContext('2d');
+        new Chart(ctxWeekly, {
+            type: 'bar',
+            data: {
+                labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                datasets: [
+                    { label: 'Water Used (L)', data: [120, 150, 110, 180, 140, 200, 170], backgroundColor: '#3b82f6', borderRadius: 6, barPercentage: 0.6 },
+                    { label: 'Avg Moisture (%)', data: [65, 70, 60, 80, 68, 85, 75], backgroundColor: '#10b981', borderRadius: 6, barPercentage: 0.6 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'end' } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true } } }
+        });
+
+        let currentPumpStateUI = false;
+        let lastEspUpdate = 0;
+
+        function updateMoistureUI(val) {
+            document.getElementById('moistureVal').innerText = val;
+            document.getElementById('counter').innerText = val + "%";
+            document.getElementById('gaugeThin').style.strokeDasharray = `${val} 100`;
+            document.getElementById('gaugeDarkBlue').style.strokeDasharray = `${val} 100`;
+            let lightBlueVal = val > 45 ? 45 : val;
+            let greenVal = val > 20 ? 20 : val;
+            document.getElementById('gaugeLightBlue').style.strokeDasharray = `${lightBlueVal} 100`;
+            document.getElementById('gaugeGreen').style.strokeDasharray = `${greenVal} 100`;
+            realtimeChart.data.datasets[0].data.push(val);
+            realtimeChart.data.datasets[0].data.shift();
+            realtimeChart.update();
+        }
+
+        function updatePumpUI(state) {
+            currentPumpStateUI = (state === 1 || state === true);
+            const dot = document.getElementById("pumpDot");
+            const status = document.getElementById("pumpStatus");
+            const toggle = document.querySelector(".toggle-switch");
+            if (currentPumpStateUI) {
+                dot.style.transform = "translateX(24px)";
+                status.innerText = "Status: ON";
+                status.classList.replace("text-gray-400", "text-emerald-400");
+                toggle.classList.add("on");
+            } else {
+                dot.style.transform = "translateX(0px)";
+                status.innerText = "Status: OFF";
+                status.classList.replace("text-emerald-400", "text-gray-400");
+                toggle.classList.remove("on");
+            }
+        }
+
+        function setConnectionStatus(isOnline, text) {
+            const dot = document.getElementById('connectionDot');
+            const statusText = document.getElementById('connectionText');
+            const btn = document.getElementById('pumpToggleBtn');
+
+            if (isOnline) {
+                dot.className = "live-dot green";
+                statusText.innerText = text;
+                statusText.className = "text-emerald-400";
+                btn.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                dot.className = "live-dot red";
+                statusText.innerText = text;
+                statusText.className = "text-red-400";
+                btn.classList.add('opacity-50', 'pointer-events-none');
+            }
+        }
+
+        onValue(ref(db, 'smartfarm/sensors'), (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                lastEspUpdate = Date.now();
+                setConnectionStatus(true, "ESP32 Online");
+
+                if (data.moisture !== undefined) updateMoistureUI(data.moisture);
+                if (data.energy !== undefined) document.getElementById('totalEnergy').innerText = data.energy.toFixed(1);
+                if (data.pumpState !== undefined) updatePumpUI(data.pumpState);
+            }
+        });
+
+
+        setInterval(() => { 
+            if (Date.now() - lastEspUpdate > 15000) {
+                setConnectionStatus(false, "ESP32 Offline");
+            }
+        }, 1000);
+
+
+        const connectedRef = ref(db, ".info/connected");
+        onValue(connectedRef, (snap) => {
+            if (snap.val() !== true) {
+                setConnectionStatus(false, "Web Offline");
+            }
+        });
+
+        
+        onValue(ref(db, 'smartfarm/control/threshold'), (snapshot) => {
+            const val = snapshot.val();
+            if (val !== null && document.activeElement !== document.getElementById('thresholdSlider')) {
+                document.getElementById("thresholdSlider").value = val;
+                document.getElementById("thresholdValue").innerText = val;
+            }
+        });
+
+        window.sendPumpToggle = function () {
+            set(ref(db, 'smartfarm/control/manualPump'), !currentPumpStateUI);
+            set(ref(db, 'smartfarm/control/manualMode'), true);
+        };
+
+        window.updateThreshold = function (val) {
+            document.getElementById("thresholdValue").innerText = val;
+            set(ref(db, 'smartfarm/control/threshold'), parseInt(val));
+        };
+    </script>
+</body>
+
+</html>
